@@ -75,6 +75,3 @@ This system helps candidates enhance their resumes while enabling recruiters to 
 📧 [durgadevi.k.1505@gmail.com](mailto:durgadevi.k.1505@gmail.com)
 🔗 [LinkedIn](https://www.linkedin.com/in/durga-devi-b88153356)
 💻 [GitHub](https://github.com/Durga-Devi-k-Git)
-
-
-Just say the word 💪😊
