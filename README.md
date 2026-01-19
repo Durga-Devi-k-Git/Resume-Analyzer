@@ -78,7 +78,7 @@ This system helps candidates enhance their resumes while enabling recruiters to 
 
 ---
 
-## 🔹 Enhancements & Contributions
+## Enhancements & Contributions
 
 This project was enhanced with a Recruiter Module for resume filtering,
 scoring, and CSV export, along with a Job Recommendation feature based
