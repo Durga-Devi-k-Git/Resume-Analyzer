@@ -1,0 +1,1425 @@
+import streamlit as st # core package used in this project
+import pandas as pd
+import base64, random
+import time,datetime
+import pymysql
+import os
+import socket
+import platform
+import geocoder
+import secrets
+import io,random
+import plotly.express as px # to create visualisations at the admin session
+import plotly.graph_objects as go
+from geopy.geocoders import Nominatim
+# libraries used to parse the pdf files
+from pyresparser import ResumeParser
+from pdfminer3.layout import LAParams, LTTextBox
+from pdfminer3.pdfpage import PDFPage
+from pdfminer3.pdfinterp import PDFResourceManager
+from pdfminer3.pdfinterp import PDFPageInterpreter
+from pdfminer3.converter import TextConverter
+from streamlit_tags import st_tags
+from PIL import Image
+# pre stored data for prediction purposes
+from Courses import ds_course,web_course,android_course,ios_course,uiux_course,resume_videos,interview_videos,web_job,android_job,ds_job,ios_job,uiux_job
+import nltk
+nltk.download('stopwords')
+
+
+###### Preprocessing functions ######
+
+
+# Generates a link allowing the data in a given panda dataframe to be downloaded in csv format 
+def get_csv_download_link(df,filename,text):
+    csv = df.to_csv(index=False)
+    ## bytes conversions
+    b64 = base64.b64encode(csv.encode()).decode()      
+    href = f'<a href="data:file/csv;base64,{b64}" download="{filename}">{text}</a>'
+    return href
+
+
+# Reads Pdf file and check_extractable
+def pdf_reader(file):
+    resource_manager = PDFResourceManager()
+    fake_file_handle = io.StringIO()
+    converter = TextConverter(resource_manager, fake_file_handle, laparams=LAParams())
+    page_interpreter = PDFPageInterpreter(resource_manager, converter)
+    with open(file, 'rb') as fh:
+        for page in PDFPage.get_pages(fh,
+                                      caching=True,
+                                      check_extractable=True):
+            page_interpreter.process_page(page)
+            print(page)
+        text = fake_file_handle.getvalue()
+
+    ## close open handles
+    converter.close()
+    fake_file_handle.close()
+    return text
+
+
+# show uploaded file path to view pdf_display
+def show_pdf(file_path):
+    with open(file_path, "rb") as f:
+        base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+    pdf_display = F'<iframe src="data:application/pdf;base64,{base64_pdf}" width="700" height="1000" type="application/pdf"></iframe>'
+    st.markdown(pdf_display, unsafe_allow_html=True)
+
+
+# course recommendations which has data already loaded from Courses.py
+def course_recommender(course_list):
+    st.subheader("**Courses & Certificates Recommendations 👨‍🎓**")
+    c = 0
+    rec_course = []
+    ## slider to choose from range 1-10
+    no_of_reco = st.slider('Choose Number of Course Recommendations:', 1, 10, 5)
+    random.shuffle(course_list)
+    for c_name, c_link in course_list:
+        c += 1
+        st.markdown(f"({c}) [{c_name}]({c_link})")
+        rec_course.append(c_name)
+        if c == no_of_reco:
+            break
+    return rec_course
+
+
+def job_recommender(job_list):
+    st.subheader("**Job Recommendations 👨‍🎓**")
+    c = 1
+    rec_job = []
+    ## slider to choose from range 1-10
+    for c_name, c_link in job_list:
+        st.markdown(f"({c}) [{c_name}]({c_link})")
+        rec_job.append(c_name)
+        c=c+1
+    return rec_job
+
+
+###### Database Stuffs ######
+
+
+# sql connector
+connection = pymysql.connect(host='localhost',user='root',password='',db='cv')
+cursor = connection.cursor()
+
+
+# inserting miscellaneous data, fetched results, prediction and recommendation into user_data table
+def insert_data(sec_token,ip_add,host_name,dev_user,os_name_ver,latlong,city,state,country,act_name,act_mail,act_mob,name,email,res_score,timestamp,no_of_pages,reco_field,cand_level,skills,recommended_skills,courses,pdf_name):
+    DB_table_name = 'user_data'
+    insert_sql = "insert into " + DB_table_name + """
+    values (0,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+    rec_values = (str(sec_token),str(ip_add),host_name,dev_user,os_name_ver,str(latlong),city,state,country,act_name,act_mail,act_mob,name,email,str(res_score),timestamp,str(no_of_pages),reco_field,cand_level,skills,recommended_skills,courses,pdf_name)
+    cursor.execute(insert_sql, rec_values)
+    connection.commit()
+
+def insertr_data(sec_token,ip_add,host_name,dev_user,os_name_ver,latlong,city,state,country,act_name,act_mail,act_mob,name,email,res_score,timestamp,no_of_pages,reco_field,cand_level,skills,recommended_skills,courses,pdf_name):
+    DB_table_name = 'rec_data'
+    insert_sql = "insert into " + DB_table_name + """
+    values (0,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+    rec_values = (str(sec_token),str(ip_add),host_name,dev_user,os_name_ver,str(latlong),city,state,country,act_name,act_mail,act_mob,name,email,str(res_score),timestamp,str(no_of_pages),reco_field,cand_level,skills,recommended_skills,courses,pdf_name)
+    cursor.execute(insert_sql, rec_values)
+    connection.commit()
+
+def insertrdup_data(sec_token,ip_add,host_name,dev_user,os_name_ver,latlong,city,state,country,act_name,act_mail,act_mob,name,email,res_score,timestamp,no_of_pages,reco_field,cand_level,skills,recommended_skills,courses,pdf_name):
+    DB_table_name = 'recdup_data'
+    insert_sql = "insert into " + DB_table_name + """
+    values (0,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+    rec_values = (str(sec_token),str(ip_add),host_name,dev_user,os_name_ver,str(latlong),city,state,country,act_name,act_mail,act_mob,name,email,str(res_score),timestamp,str(no_of_pages),reco_field,cand_level,skills,recommended_skills,courses,pdf_name)
+    cursor.execute(insert_sql, rec_values)
+    connection.commit()
+
+
+
+# inserting feedback data into user_feedback table
+def insertf_data(feed_name,feed_email,feed_score,comments,Timestamp):
+    DBf_table_name = 'user_feedback'
+    insertfeed_sql = "insert into " + DBf_table_name + """
+    values (0,%s,%s,%s,%s,%s)"""
+    rec_values = (feed_name, feed_email, feed_score, comments, Timestamp)
+    cursor.execute(insertfeed_sql, rec_values)
+    connection.commit()
+
+
+###### Setting Page Configuration (favicon, Logo, Title) ######
+
+
+st.set_page_config(
+   page_title="AI Resume Analyzer",
+   page_icon='./Logo/recommend.png',
+   layout="wide",
+)
+st.markdown(""" <style> .stApp{background-color:white}</style>""",unsafe_allow_html=True)
+st.markdown(""" <style> div[data-baseweb="input"]>div{background-color:white;border:black solid 2px}</style>""",unsafe_allow_html=True)
+st.markdown(""" <style> button[kind="primary"]{background-color:white;border:black solid 2px}</style>""",unsafe_allow_html=True)
+st.markdown(""" <style> div.block-container{ padding:0rem 2rem 0rem 2rem;}
+            section[data-testid="stSidebar"]>div:first-child{padding: 1rem;}
+            </style>""",unsafe_allow_html=True)
+
+st.markdown("""
+        <style>
+    /* Container for the tabs */
+    .stTabs [role="tablist"] {
+        background-color: darkgray;
+            padding:20px;
+            font-weight:bolder;
+            margin-bottom:20px;
+            margin-top:5px;
+    }
+
+    /* Each individual tab */
+    .stTabs [role="tab"] {
+        border: 2px solid black;  /* Initial transparent border */
+        border-radius: 5px;
+        padding: 8px;padding-left:20px;
+        cursor: pointer;font-weight:bolder;
+        transition: all 0.3s ease;  /* Smooth transition effect */
+    }
+
+    /* Hover effect for the tabs */
+    .stTabs [role="tab"]:hover {
+        background-color: #f1f1f1;  /* Light grey background on hover */
+        transform: scale(1.05);  /* Slightly enlarge the tab */
+        border-color: black;  /* Green border on hover */
+    font-weight:bolder;}
+
+    /* Active tab (when selected) */
+    .stTabs [role="tab"][aria-selected="true"] {
+        background-color: ghostwhite;  /* Green background for the active tab */
+        color: blue;
+        border-color: black;font-weight:bolder;
+        transform: scale(1.1);  /* Enlarge the active tab */
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);  /* Add a subtle shadow for active tab */
+    }
+
+    /* Animation effect for the tabs when hovered */
+    .stTabs [role="tab"]:hover {
+        animation: tabHover 0.5s ease-in-out;font-weight:bolder;
+    }
+
+    /* Keyframes for animation */
+    @keyframes tabHover {
+        0% {
+            transform: scale(1);
+        }
+        50% {
+            transform: scale(1.1);
+        }
+        100% {
+            transform: scale(1);
+        }
+    }
+</style>       
+    """,unsafe_allow_html=True)
+
+
+
+###### Main function run() ######
+def recruiter():
+        st.success('Hi recruiter! ')
+        tab1,tab2,tab3,tab4,tab5=st.tabs(["Upload Resume","Extracted Basic Info","Score", "Filter Candidate's Resume","Data Privacy"])
+        with tab1:
+            col1,col2,col3,col4=st.columns(4)
+            with col1:
+                act_name=st.text_input("Name")
+            with col2:
+                act_mail=st.text_input("Email ID")
+            with col3:
+                act_mob=st.text_input("Phone Number")
+            with col4:
+                act_com=st.text_input("Company Name")
+            sec_token = secrets.token_urlsafe(12)
+            host_name = socket.gethostname()
+            ip_add = socket.gethostbyname(host_name)
+            dev_user = os.getlogin()
+            os_name_ver = platform.system() + " " + platform.release()
+            g = geocoder.ip('me')
+            latlong = g.latlng
+            geolocator = Nominatim(user_agent="http")
+            location = geolocator.reverse(latlong, language='en')
+            address = location.raw['address']
+            cityy = address.get('city', '')
+            statee = address.get('state', '')
+            countryy = address.get('country', '')  
+            city = cityy
+            state = statee
+            country = countryy
+
+        # Upload Resume
+            st.markdown('''<h5 style='text-align: left; color: #021659;'> Upload Resume</h5>''',unsafe_allow_html=True)
+            
+            ## file upload in pdf format
+            pdf_files = st.file_uploader("Choose Resume", type=["pdf"],accept_multiple_files=True)
+            if pdf_files:
+                for file in pdf_files:
+                    ### saving the uploaded resume to folder
+                    save_image_path = './Uploaded_Resumes/'+file.name
+                    pdf_name = file.name
+                    with open(save_image_path, "wb") as f:
+                        f.write(file.getbuffer())
+                    show_pdf(save_image_path)
+                    resume_data = ResumeParser(save_image_path).get_extracted_data()
+                    if resume_data:
+                            ## Get the whole resume data into resume_text
+                        resume_text = pdf_reader(save_image_path)
+
+                        cand_level = ''
+                        if resume_data['no_of_pages'] < 1:                
+                            cand_level = "NA"
+                            
+                        #### if internship then intermediate level
+                        elif 'INTERNSHIP' in resume_text:
+                            cand_level = "Intermediate"
+                        elif 'INTERNSHIPS' in resume_text:
+                            cand_level = "Intermediate"
+                        elif 'Internship' in resume_text:
+                            cand_level = "Intermediate"
+                        elif 'Internships' in resume_text:
+                            cand_level = "Intermediate"
+                        
+                        #### if Work Experience/Experience then Experience level
+                        elif 'EXPERIENCE' in resume_text:
+                            cand_level = "Experienced"
+                        elif 'WORK EXPERIENCE' in resume_text:
+                            cand_level = "Experienced"
+                        elif 'Experience' in resume_text:
+                            cand_level = "Experienced"
+                        elif 'Work Experience' in resume_text:
+                            cand_level = "Experienced"
+                        else:
+                            cand_level = "Fresher"
+                        
+
+                
+                        ### Keywords for Recommendations
+                        ds_keyword = ['tensorflow','keras','pytorch','machine learning','deep Learning','flask','streamlit']
+                        web_keyword = ['react', 'django', 'node jS', 'react js', 'php', 'laravel', 'magento', 'wordpress','javascript', 'angular js', 'C#', 'Asp.net', 'flask']
+                        android_keyword = ['android','android development','flutter','kotlin','xml','kivy']
+                        ios_keyword = ['ios','ios development','swift','cocoa','cocoa touch','xcode']
+                        uiux_keyword = ['ux','adobe xd','figma','zeplin','balsamiq','ui','prototyping','wireframes','storyframes','adobe photoshop','photoshop','editing','adobe illustrator','illustrator','adobe after effects','after effects','adobe premier pro','premier pro','adobe indesign','indesign','wireframe','solid','grasp','user research','user experience']
+                        n_any = ['english','communication','writing', 'microsoft office', 'leadership','customer management', 'social media']
+                        ### Skill Recommendations Starts                
+                        recommended_skills = []
+                        reco_field = ''
+                        rec_course = ''
+
+                        ### condition starts to check skills from keywords and predict field
+                        for i in resume_data['skills']:
+                        
+                            #### Data science recommendation
+                            if i.lower() in ds_keyword:
+                                print(i.lower())
+                                reco_field = 'Data Science'
+                                break
+
+                            #### Web development recommendation
+                            elif i.lower() in web_keyword:
+                                print(i.lower())
+                                reco_field = 'Web Development'
+                                break
+
+                            #### Android App Development
+                            elif i.lower() in android_keyword:
+                                print(i.lower())
+                                reco_field = 'Android Development'
+                                break
+
+                            #### IOS App Development
+                            elif i.lower() in ios_keyword:
+                                print(i.lower())
+                                reco_field = 'IOS Development'
+                                break
+
+                            #### Ui-UX Recommendation
+                            elif i.lower() in uiux_keyword:
+                                print(i.lower())
+                                reco_field = 'UI-UX Development'
+                                break
+
+                            #### For Not Any Recommendations
+                            elif i.lower() in n_any:
+                                print(i.lower())
+                                reco_field = 'NA'
+                                break
+
+                        resume_score = 0
+                        
+                        ### Predicting Whether these key points are added to the resume
+                        if 'Objective' or 'Summary' in resume_text:
+                            resume_score = resume_score+6
+                        
+                        if 'Education' or 'School' or 'College'  in resume_text:
+                            resume_score = resume_score + 12
+                        
+                        if 'EXPERIENCE' in resume_text:
+                            resume_score = resume_score + 16
+                        elif 'Experience' in resume_text:
+                            resume_score = resume_score + 16
+                        
+                        if 'INTERNSHIPS'  in resume_text:
+                            resume_score = resume_score + 6
+                        elif 'INTERNSHIP'  in resume_text:
+                            resume_score = resume_score + 6
+                        elif 'Internships'  in resume_text:
+                            resume_score = resume_score + 6
+                        elif 'Internship'  in resume_text:
+                            resume_score = resume_score + 6
+                        
+                        if 'SKILLS'  in resume_text:
+                            resume_score = resume_score + 7
+                        elif 'SKILL'  in resume_text:
+                            resume_score = resume_score + 7
+                        elif 'Skills'  in resume_text:
+                            resume_score = resume_score + 7
+                        elif 'Skill'  in resume_text:
+                            resume_score = resume_score + 7
+                        
+                        if 'HOBBIES' in resume_text:
+                            resume_score = resume_score + 4
+                        elif 'Hobbies' in resume_text:
+                            resume_score = resume_score + 4
+                        
+                        if 'INTERESTS'in resume_text:
+                            resume_score = resume_score + 5
+                        elif 'Interests'in resume_text:
+                            resume_score = resume_score + 5
+                    
+                        if 'ACHIEVEMENTS' in resume_text:
+                            resume_score = resume_score + 13
+                        elif 'Achievements' in resume_text:
+                            resume_score = resume_score + 13
+                        
+                        if 'CERTIFICATIONS' in resume_text:
+                            resume_score = resume_score + 12
+                        elif 'Certifications' in resume_text:
+                            resume_score = resume_score + 12
+                        elif 'Certification' in resume_text:
+                            resume_score = resume_score + 12
+                        
+                        if 'PROJECTS' in resume_text:
+                            resume_score = resume_score + 19
+                        elif 'PROJECT' in resume_text:
+                            resume_score = resume_score + 19
+                        elif 'Projects' in resume_text:
+                            resume_score = resume_score + 19
+                        elif 'Project' in resume_text:
+                            resume_score = resume_score + 19
+                        
+                        ### Getting Current Date and Time
+                        ts = time.time()
+                        cur_date = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+                        cur_time = datetime.datetime.fromtimestamp(ts).strftime('%H:%M:%S')
+                        timestamp = str(cur_date+'_'+cur_time)
+
+
+                        ## Calling insert_data to add all the data into user_data                
+                        insertr_data(str(sec_token), str(ip_add), (host_name), (dev_user), (os_name_ver), (latlong), (city), (state), (country), (act_name), (act_mail), (act_mob), resume_data['name'], resume_data['email'], str(resume_score), timestamp, str(resume_data['no_of_pages']), reco_field, cand_level, str(resume_data['skills']), str(recommended_skills), str(rec_course), pdf_name)
+                        insertrdup_data(str(sec_token), str(ip_add), (host_name), (dev_user), (os_name_ver), (latlong), (city), (state), (country), (act_name), (act_mail), (act_mob), resume_data['name'], resume_data['email'], str(resume_score), timestamp, str(resume_data['no_of_pages']), reco_field, cand_level, str(resume_data['skills']), str(recommended_skills), str(rec_course), pdf_name)
+
+
+
+                        for i in resume_data['skills']:
+                            
+                                #### Data science recommendation
+                                if i.lower() in ds_keyword:
+                                    print(i.lower())
+                                    reco_field = 'Data Science'
+                                    break
+
+                                #### Web development recommendation
+                                elif i.lower() in web_keyword:
+                                    print(i.lower())
+                                    reco_field = 'Web Development'
+                                    break
+
+                                #### Android App Development
+                                elif i.lower() in android_keyword:
+                                    print(i.lower())
+                                    reco_field = 'Android Development'
+                                    break
+
+                                #### IOS App Development
+                                elif i.lower() in ios_keyword:
+                                    print(i.lower())
+                                    reco_field = 'IOS Development'
+                                    break
+
+                                #### Ui-UX Recommendation
+                                elif i.lower() in uiux_keyword:
+                                    print(i.lower())
+                                    reco_field = 'UI-UX Development'
+                                    break
+
+                                #### For Not Any Recommendations
+                                elif i.lower() in n_any:
+                                    print(i.lower())
+                                    reco_field = 'NA'
+                                    break
+        
+        with tab2:
+            st.subheader("Extracted Basic Info ")
+            cursor.execute('''SELECT Name, Email_ID, Page_no, pdf_name, convert(User_level using utf8), convert(Actual_skills using utf8) from rec_data''')
+            data = cursor.fetchall()                
+            df = pd.DataFrame(data, columns=['Predicted Name', 'Predicted Mail','Total Page',  'File Name',   
+                                                    'User Level', 'Actual Skills',])
+                    
+                    ### Viewing the dataframe
+            st.dataframe(df)
+                    
+                    ### Downloading Report of user_data in csv file
+            st.markdown(get_csv_download_link(df,'candidate_Data.csv','📥 Download Report'), unsafe_allow_html=True)
+                
+        with tab3:
+            cursor.execute('''SELECT Name, Email_ID, resume_score, pdf_name from rec_data''')
+            data = cursor.fetchall()                
+            st.header("**Score**")
+            df = pd.DataFrame(data, columns=['Predicted Name', 'Predicted Mail', 'Resume Score', 'File Name',])        
+            ### Viewing the dataframe
+            st.dataframe(df)
+            st.markdown(get_csv_download_link(df,'score_Data.csv','📥 Download Report'), unsafe_allow_html=True)
+            
+                
+
+        with tab4:
+            col1, col2, col3 = st.columns(3)
+
+            # Input fields
+            with col1:
+                sco = st.number_input("Score Level (1-100)", min_value=1, max_value=100, value=70, step=1)
+
+            with col2:
+                options = ["choose candidate level","Fresher", "Intermediate", "Experienced"]
+                lev = st.selectbox("Select Candidate Level", options)
+
+            with col3:
+                roles = ["choose job role","Web Development", "UI-UX Development", "Android Development", "IOS Development", "Data Science"]
+                role = st.selectbox("Select Job Role", roles)
+
+            # SQL query with WHERE condition and parameterized query
+            query = '''
+                SELECT DISTINCT
+                    convert(Predicted_Field using utf8) AS Predicted_Field, 
+                    Name AS Predicted_Name, 
+                    Email_ID AS Predicted_Mail, 
+                    resume_score AS Resume_Score, 
+                    pdf_name AS File_Name, 
+                    convert(User_level using utf8) AS User_Level 
+                FROM 
+                    rec_data 
+                WHERE 
+                    resume_score >= %s 
+                    AND LOWER(convert(User_level using utf8)) = LOWER(%s) 
+                    AND LOWER(convert(Predicted_Field using utf8)) = LOWER(%s)
+                    
+            '''
+
+            # Execute query with parameters
+            cursor.execute(query, (sco, lev,role))
+            data = cursor.fetchall()  # Fetch the results
+
+            # Display the filtered data
+            st.header("**Filtered Data**")
+            if data:
+                df = pd.DataFrame(data, columns=['Predicted Field', 'Predicted Name', 'Predicted Mail', 'Resume Score', 'File Name', 'User Level'])
+                st.dataframe(df)
+            else:
+                st.warning("⚠ No data found.")
+            st.markdown(get_csv_download_link(df,'final_Data.csv','📥 Download Report'), unsafe_allow_html=True)
+        with tab5:
+            st.subheader("Delete extracted resume data for security purposes.")
+            if st.button("🚨 Delete Data "):
+                query1=''' drop table rec_data'''
+                cursor.execute(query1)
+                st.success("✅ Data has been cleared successfully!")
+            
+                time.sleep(1)
+
+        # JavaScript to Reload the Page Fully (Like Pressing F5)
+                st.markdown(
+            """
+            <meta http-equiv="refresh" content="0">
+            """,
+            unsafe_allow_html=True
+        )
+
+            
+def user_function():
+        
+        st.success('Hi User! Ready to take your resume to the next level? ')
+        tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["  Upload Your Resume","Basic Info","Feedback & Score", "Recommendations ","Job Insights","Resources For Success"])
+        with tab1:
+        
+            # Collecting Miscellaneous Information
+            col1,col2,col3=st.columns(3)
+            with col1:
+                act_name=st.text_input("Name")
+            with col2:
+                act_mail=st.text_input("Email ID")
+            with col3:
+                act_mob=st.text_input("Phone Number")
+            sec_token = secrets.token_urlsafe(12)
+            host_name = socket.gethostname()
+            ip_add = socket.gethostbyname(host_name)
+            dev_user = os.getlogin()
+            os_name_ver = platform.system() + " " + platform.release()
+            g = geocoder.ip('me')
+            latlong = g.latlng
+            geolocator = Nominatim(user_agent="http")
+            location = geolocator.reverse(latlong, language='en')
+            address = location.raw['address']
+            cityy = address.get('city', '')
+            statee = address.get('state', '')
+            countryy = address.get('country', '')  
+            city = cityy
+            state = statee
+            country = countryy
+
+
+            # Upload Resume
+            st.markdown('''<h5 style='text-align: left; color: #021659;'> Upload Your Resume, And Get Smart Recommendations</h5>''',unsafe_allow_html=True)
+            
+            ## file upload in pdf format
+            pdf_file = st.file_uploader("Choose your Resume", type=["pdf"])
+            if pdf_file is not None:
+                with st.spinner('Hang On While We Cook Magic For You...'):
+                    time.sleep(4)
+            
+                ### saving the uploaded resume to folder
+                save_image_path = './Uploaded_Resumes/'+pdf_file.name
+                pdf_name = pdf_file.name
+                with open(save_image_path, "wb") as f:
+                    f.write(pdf_file.getbuffer())
+                show_pdf(save_image_path)
+            else:
+                st.error('Please Upload Your Resume..') 
+        
+        resume_data = ResumeParser(save_image_path).get_extracted_data()
+        if resume_data:
+            
+            with tab2:
+                
+                ## Get the whole resume data into resume_text
+                resume_text = pdf_reader(save_image_path)
+
+                ## Showing Analyzed data from (resume_data)
+                st.success("Hello "+ resume_data['name'])
+                st.subheader("**Your Basic info 👀**")
+                try:
+                    st.text('Name: '+resume_data['name'])
+                    st.text('Email: ' + resume_data['email'])
+                    st.text('Contact: ' + resume_data['mobile_number'])
+                    st.text('Degree: '+str(resume_data['degree']))                    
+                    st.text('Resume pages: '+str(resume_data['no_of_pages']))
+
+                except:
+                    pass
+                ## Predicting Candidate Experience Level 
+
+                ### Trying with different possibilities
+                cand_level = ''
+                if resume_data['no_of_pages'] < 1:                
+                    cand_level = "NA"
+                    st.markdown( '''<h4 style='text-align: left; color: #d73b5c;'>You are at Fresher level!</h4>''',unsafe_allow_html=True)
+                
+                #### if internship then intermediate level
+                elif 'INTERNSHIP' in resume_text:
+                    cand_level = "Intermediate"
+                    st.markdown('''<h4 style='text-align: left; color: #1ed760;'>You are at intermediate level!</h4>''',unsafe_allow_html=True)
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Mention Internship In Your Resume)</h5>''',unsafe_allow_html=True)
+                elif 'INTERNSHIPS' in resume_text:
+                    cand_level = "Intermediate"
+                    st.markdown('''<h4 style='text-align: left; color: #1ed760;'>You are at intermediate level!</h4>''',unsafe_allow_html=True)
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Mention Internship In Your Resume)</h5>''',unsafe_allow_html=True)
+                elif 'Internship' in resume_text:
+                    cand_level = "Intermediate"
+                    st.markdown('''<h4 style='text-align: left; color: #1ed760;'>You are at intermediate level!</h4>''',unsafe_allow_html=True)
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Mention Internship In Your Resume)</h5>''',unsafe_allow_html=True)
+                elif 'Internships' in resume_text:
+                    cand_level = "Intermediate"
+                    st.markdown('''<h4 style='text-align: left; color: #1ed760;'>You are at intermediate level!</h4>''',unsafe_allow_html=True)
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Mention Internship In Your Resume)</h5>''',unsafe_allow_html=True)
+                
+                #### if Work Experience/Experience then Experience level
+                elif 'EXPERIENCE' in resume_text:
+                    cand_level = "Experienced"
+                    st.markdown('''<h4 style='text-align: left; color: #fba171;'>You are at experience level!''',unsafe_allow_html=True)
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Mention Experience In Your Resume)</h5>''',unsafe_allow_html=True)
+                elif 'WORK EXPERIENCE' in resume_text:
+                    cand_level = "Experienced"
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Mention Experience In Your Resume)</h5>''',unsafe_allow_html=True)
+                    st.markdown('''<h4 style='text-align: left; color: #fba171;'>You are at experience level!''',unsafe_allow_html=True)
+                elif 'Experience' in resume_text:
+                    cand_level = "Experienced"
+                    st.markdown('''<h4 style='text-align: left; color: #fba171;'>You are at experience level!''',unsafe_allow_html=True)
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Mention Experience In Your Resume)</h5>''',unsafe_allow_html=True)
+                elif 'Work Experience' in resume_text:
+                    cand_level = "Experienced"
+                    st.markdown('''<h4 style='text-align: left; color: #fba171;'>You are at experience level!''',unsafe_allow_html=True)
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Mention Experience In Your Resume)</h5>''',unsafe_allow_html=True)                
+                else:
+                    cand_level = "Fresher"
+                    st.markdown('''<h4 style='text-align: left; color: #fba171;'>You are at Fresher level!!''',unsafe_allow_html=True)
+                    st.markdown('''<h5 style='text-align: left; color: black;'>(You Didn't Mention Internship or Experience In Your Resume)</h5>''',unsafe_allow_html=True)
+
+            with tab3:
+                st.subheader("**Feedback 📝**")
+                resume_score = 0
+                
+                ### Predicting Whether these key points are added to the resume
+                if 'Objective' or 'Summary' in resume_text:
+                    resume_score = resume_score+6
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Objective/Summary</h4>''',unsafe_allow_html=True)                
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add your career objective, it will give your career intension to the Recruiters.</h4>''',unsafe_allow_html=True)
+
+                if 'Education' or 'School' or 'College'  in resume_text:
+                    resume_score = resume_score + 12
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Education Details</h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Education. It will give Your Qualification level to the recruiter</h4>''',unsafe_allow_html=True)
+
+                if 'EXPERIENCE' in resume_text:
+                    resume_score = resume_score + 16
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Experience</h4>''',unsafe_allow_html=True)
+                elif 'Experience' in resume_text:
+                    resume_score = resume_score + 16
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Experience</h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Experience. It will help you to stand out from crowd</h4>''',unsafe_allow_html=True)
+
+                if 'INTERNSHIPS'  in resume_text:
+                    resume_score = resume_score + 6
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Internships</h4>''',unsafe_allow_html=True)
+                elif 'INTERNSHIP'  in resume_text:
+                    resume_score = resume_score + 6
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Internships</h4>''',unsafe_allow_html=True)
+                elif 'Internships'  in resume_text:
+                    resume_score = resume_score + 6
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Internships</h4>''',unsafe_allow_html=True)
+                elif 'Internship'  in resume_text:
+                    resume_score = resume_score + 6
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Internships</h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Internships. It will help you to stand out from crowd</h4>''',unsafe_allow_html=True)
+
+                if 'SKILLS'  in resume_text:
+                    resume_score = resume_score + 7
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Skills</h4>''',unsafe_allow_html=True)
+                elif 'SKILL'  in resume_text:
+                    resume_score = resume_score + 7
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Skills</h4>''',unsafe_allow_html=True)
+                elif 'Skills'  in resume_text:
+                    resume_score = resume_score + 7
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Skills</h4>''',unsafe_allow_html=True)
+                elif 'Skill'  in resume_text:
+                    resume_score = resume_score + 7
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Skills</h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Skills. It will help you a lot</h4>''',unsafe_allow_html=True)
+
+                if 'HOBBIES' in resume_text:
+                    resume_score = resume_score + 4
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Hobbies</h4>''',unsafe_allow_html=True)
+                elif 'Hobbies' in resume_text:
+                    resume_score = resume_score + 4
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Hobbies</h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Hobbies. It will show your personality to the Recruiters and give the assurance that you are fit for this role or not.</h4>''',unsafe_allow_html=True)
+
+                if 'INTERESTS'in resume_text:
+                    resume_score = resume_score + 5
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Interest</h4>''',unsafe_allow_html=True)
+                elif 'Interests'in resume_text:
+                    resume_score = resume_score + 5
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Interest</h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Interest. It will show your interest other that job.</h4>''',unsafe_allow_html=True)
+
+                if 'ACHIEVEMENTS' in resume_text:
+                    resume_score = resume_score + 13
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Achievements </h4>''',unsafe_allow_html=True)
+                elif 'Achievements' in resume_text:
+                    resume_score = resume_score + 13
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Achievements </h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Achievements. It will show that you are capable for the required position.</h4>''',unsafe_allow_html=True)
+
+                if 'CERTIFICATIONS' in resume_text:
+                    resume_score = resume_score + 12
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Certifications </h4>''',unsafe_allow_html=True)
+                elif 'Certifications' in resume_text:
+                    resume_score = resume_score + 12
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Certifications </h4>''',unsafe_allow_html=True)
+                elif 'Certification' in resume_text:
+                    resume_score = resume_score + 12
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Certifications </h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Certifications. It will show that you have done some specialization for the required position.</h4>''',unsafe_allow_html=True)
+
+                if 'PROJECTS' in resume_text:
+                    resume_score = resume_score + 19
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Projects</h4>''',unsafe_allow_html=True)
+                elif 'PROJECT' in resume_text:
+                    resume_score = resume_score + 19
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Projects</h4>''',unsafe_allow_html=True)
+                elif 'Projects' in resume_text:
+                    resume_score = resume_score + 19
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Projects</h4>''',unsafe_allow_html=True)
+                elif 'Project' in resume_text:
+                    resume_score = resume_score + 19
+                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Projects</h4>''',unsafe_allow_html=True)
+                else:
+                    st.markdown('''<h5 style='text-align: left; color: #000000;'>[-] Please add Projects. It will show that you have done work related the required position or not.</h4>''',unsafe_allow_html=True)
+
+                st.subheader("**Resume Score 📝**")
+                
+                st.markdown(
+                    """
+                    <style>
+                        .stProgress > div > div > div > div {
+                            background-color: #d73b5c;
+                        }
+                    </style>""",
+                    unsafe_allow_html=True,
+                )
+
+                ### Score Bar
+                my_bar = st.progress(0)
+                score = 0
+                for percent_complete in range(resume_score):
+                    score +=1
+                    time.sleep(0.1)
+                    my_bar.progress(percent_complete + 1)
+
+                ### Score
+                st.success('** Your Resume Writing Score: ' + str(score)+'**')
+                st.warning("** Note: This score is calculated based on the content that you have in your Resume. **")
+
+            with tab4:
+
+                st.subheader("**Skills Recommendation 💡**")
+                
+                ### Current Analyzed Skills
+                #keywords = st_tags(label='### Your Current Skills',
+                #text='See our skills recommendation below',value=resume_data['skills'],key = '1  ')
+
+                ### Keywords for Recommendations
+                ds_keyword = ['tensorflow','keras','pytorch','machine learning','deep Learning','flask','streamlit']
+                web_keyword = ['react', 'django', 'node jS', 'react js', 'php', 'laravel', 'magento', 'wordpress','javascript', 'angular js', 'C#', 'Asp.net', 'flask']
+                android_keyword = ['android','android development','flutter','kotlin','xml','kivy']
+                ios_keyword = ['ios','ios development','swift','cocoa','cocoa touch','xcode']
+                uiux_keyword = ['ux','adobe xd','figma','zeplin','balsamiq','ui','prototyping','wireframes','storyframes','adobe photoshop','photoshop','editing','adobe illustrator','illustrator','adobe after effects','after effects','adobe premier pro','premier pro','adobe indesign','indesign','wireframe','solid','grasp','user research','user experience']
+                n_any = ['english','communication','writing', 'microsoft office', 'leadership','customer management', 'social media']
+                ### Skill Recommendations Starts                
+                recommended_skills = []
+                reco_field = ''
+                rec_course = ''
+                rec_job = ''
+
+                ### condition starts to check skills from keywords and predict field
+                for i in resume_data['skills']:
+                
+                    #### Data science recommendation
+                    if i.lower() in ds_keyword:
+                        print(i.lower())
+                        reco_field = 'Data Science'
+                        st.success("** Our analysis says you are looking for Data Science Jobs.**")
+                        recommended_skills = ['Data Visualization','Predictive Analysis','Statistical Modeling','Data Mining','Clustering & Classification','Data Analytics','Quantitative Analysis','Web Scraping','ML Algorithms','Keras','Pytorch','Probability','Scikit-learn','Tensorflow',"Flask",'Streamlit']
+                        recommended_keywords = st_tags(label='### Recommended skills for you.',
+                        text='Recommended skills generated from System',value=recommended_skills,key = '2')
+                        st.markdown('''<h5 style='text-align: left; color: #1ed760;'>Adding this skills to resume will boost🚀 the chances of getting a Job</h5>''',unsafe_allow_html=True)
+                        # course recommendation
+                        rec_course = course_recommender(ds_course)
+                        break
+
+                    #### Web development recommendation
+                    elif i.lower() in web_keyword:
+                        print(i.lower())
+                        reco_field = 'Web Development'
+                        st.success("** Our analysis says you are looking for Web Development Jobs **")
+                        recommended_skills = ['React','Django','Node JS','React JS','php','laravel','Magento','wordpress','Javascript','Angular JS','c#','Flask','SDK']
+                        recommended_keywords = st_tags(label='### Recommended skills for you.',
+                        text='Recommended skills generated from System',value=recommended_skills,key = '3')
+                        st.markdown('''<h5 style='text-align: left; color: #1ed760;'>Adding this skills to resume will boost🚀 the chances of getting a Job💼</h5>''',unsafe_allow_html=True)
+                        # course recommendation
+                        rec_course = course_recommender(web_course)
+                        break
+
+                    #### Android App Development
+                    elif i.lower() in android_keyword:
+                        print(i.lower())
+                        reco_field = 'Android Development'
+                        st.success("** Our analysis says you are looking for Android App Development Jobs **")
+                        recommended_skills = ['Android','Android development','Flutter','Kotlin','XML','Java','Kivy','GIT','SDK','SQLite']
+                        recommended_keywords = st_tags(label='### Recommended skills for you.',
+                        text='Recommended skills generated from System',value=recommended_skills,key = '4')
+                        st.markdown('''<h5 style='text-align: left; color: #1ed760;'>Adding this skills to resume will boost🚀 the chances of getting a Job💼</h5>''',unsafe_allow_html=True)
+                        # course recommendation
+                        rec_course = course_recommender(android_course)
+                        break
+
+                    #### IOS App Development
+                    elif i.lower() in ios_keyword:
+                        print(i.lower())
+                        reco_field = 'IOS Development'
+                        st.success("** Our analysis says you are looking for IOS App Development Jobs **")
+                        recommended_skills = ['IOS','IOS Development','Swift','Cocoa','Cocoa Touch','Xcode','Objective-C','SQLite','Plist','StoreKit',"UI-Kit",'AV Foundation','Auto-Layout']
+                        recommended_keywords = st_tags(label='### Recommended skills for you.',
+                        text='Recommended skills generated from System',value=recommended_skills,key = '5')
+                        st.markdown('''<h5 style='text-align: left; color: #1ed760;'>Adding this skills to resume will boost🚀 the chances of getting a Job💼</h5>''',unsafe_allow_html=True)
+                        # course recommendation
+                        rec_course = course_recommender(ios_course)
+                        break
+
+                    #### Ui-UX Recommendation
+                    elif i.lower() in uiux_keyword:
+                        print(i.lower())
+                        reco_field = 'UI-UX Development'
+                        st.success("** Our analysis says you are looking for UI-UX Development Jobs **")
+                        recommended_skills = ['UI','User Experience','Adobe XD','Figma','Zeplin','Balsamiq','Prototyping','Wireframes','Storyframes','Adobe Photoshop','Editing','Illustrator','After Effects','Premier Pro','Indesign','Wireframe','Solid','Grasp','User Research']
+                        recommended_keywords = st_tags(label='### Recommended skills for you.',
+                        text='Recommended skills generated from System',value=recommended_skills,key = '6')
+                        st.markdown('''<h5 style='text-align: left; color: #1ed760;'>Adding this skills to resume will boost🚀 the chances of getting a Job💼</h5>''',unsafe_allow_html=True)
+                        # course recommendation
+                        rec_course = course_recommender(uiux_course)
+                        break
+
+                    #### For Not Any Recommendations
+                    elif i.lower() in n_any:
+                        print(i.lower())
+                        reco_field = 'NA'
+                        st.warning("** Currently our tool only predicts and recommends for Data Science, Web, Android, IOS and UI/UX Development**")
+                        recommended_skills = ['No Recommendations']
+                        recommended_keywords = st_tags(label='### Recommended skills for you.',
+                        text='Currently No Recommendations',value=recommended_skills,key = '6')
+                        st.markdown('''<h5 style='text-align: left; color: #092851;'>Maybe Available in Future Updates</h5>''',unsafe_allow_html=True)
+                        # course recommendation
+                        rec_course = "Sorry! Not Available for this Field"
+                        break
+    
+            with tab5:
+
+                for i in resume_data['skills']:
+                
+                    #### Data science recommendation
+                    if i.lower() in ds_keyword:
+                        print(i.lower())
+                        reco_field = 'Data Science'
+                        st.success("** Our analysis says you are looking for Data Science Jobs.**")
+                        rec_job= job_recommender(ds_job)
+                        break
+
+                    #### Web development recommendation
+                    elif i.lower() in web_keyword:
+                        print(i.lower())
+                        reco_field = 'Web Development'
+                        st.success("** Our analysis says you are looking for Web Development Jobs **")
+                        rec_job= job_recommender(web_job)
+                        break
+
+                    #### Android App Development
+                    elif i.lower() in android_keyword:
+                        print(i.lower())
+                        reco_field = 'Android Development'
+                        st.success("** Our analysis says you are looking for Android App Development Jobs **")
+                        rec_job= job_recommender(android_job)
+                        break
+
+                    #### IOS App Development
+                    elif i.lower() in ios_keyword:
+                        print(i.lower())
+                        reco_field = 'IOS Development'
+                        st.success("** Our analysis says you are looking for IOS App Development Jobs **")
+                        rec_job= job_recommender(ios_job)
+                        break
+
+                    #### Ui-UX Recommendation
+                    elif i.lower() in uiux_keyword:
+                        print(i.lower())
+                        reco_field = 'UI-UX Development'
+                        st.success("** Our analysis says you are looking for UI-UX Development Jobs **")
+                        rec_job= job_recommender(uiux_job)
+                        break
+
+                    #### For Not Any Recommendations
+                    elif i.lower() in n_any:
+                        print(i.lower())
+                        reco_field = 'NA'
+                        st.warning("** Currently our tool only predicts and recommends for Data Science, Web, Android, IOS and UI/UX Development**")
+                        st.markdown('''<h5 style='text-align: left; color: #092851;'>Maybe Available in Future Updates</h5>''',unsafe_allow_html=True)
+                        break
+
+
+            with tab6:
+
+                st.header("**Bonus Video for Resume Writing Tips💡**")
+                resume_vid = random.choice(resume_videos)
+                st.video(resume_vid)
+
+
+                ## Recommending Interview Preparation Video
+                st.header("**Bonus Video for Interview Tips💡**")
+                interview_vid = random.choice(interview_videos)
+                st.video(interview_vid)
+
+            # print(str(sec_token), str(ip_add), (host_name), (dev_user), (os_name_ver), (latlong), (city), (state), (country), (act_name), (act_mail), (act_mob), resume_data['name'], resume_data['email'], str(resume_score), timestamp, str(resume_data['no_of_pages']), reco_field, cand_level, str(resume_data['skills']), str(recommended_skills), str(rec_course), pdf_name)
+            ### Getting Current Date and Time
+            ts = time.time()
+            cur_date = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+            cur_time = datetime.datetime.fromtimestamp(ts).strftime('%H:%M:%S')
+            timestamp = str(cur_date+'_'+cur_time)
+
+
+            ## Calling insert_data to add all the data into user_data                
+            insert_data(str(sec_token), str(ip_add), (host_name), (dev_user), (os_name_ver), (latlong), (city), (state), (country), (act_name), (act_mail), (act_mob), resume_data['name'], resume_data['email'], str(resume_score), timestamp, str(resume_data['no_of_pages']), reco_field, cand_level, str(resume_data['skills']), str(recommended_skills), str(rec_course), pdf_name)
+    
+        else:
+            st.error('Sorry! Something went wrong..')                
+
+
+def admin_function():
+        st.success('Welcom to the Admin Dashboard! ')
+
+        #  Admin Login
+        col1,col2=st.columns(2)
+        with col1:
+                ad_user=st.text_input("Username")
+        with col2:
+                ad_password=st.text_input("Password", type='password')
+
+        if st.button('Login'):
+            
+            ## Credentials 
+            if ad_user == 'admin' and ad_password == 'admin':
+                
+                ### Fetch miscellaneous data from user_data(table) and convert it into dataframe
+                cursor.execute('''SELECT ID, ip_add, resume_score, convert(Predicted_Field using utf8), convert(User_level using utf8), city, state, country from user_data''')
+                datanalys = cursor.fetchall()
+                plot_data = pd.DataFrame(datanalys, columns=['Idt', 'IP_add', 'resume_score', 'Predicted_Field', 'User_Level', 'City', 'State', 'Country'])
+                
+                ### Total Users Count with a Welcome Message
+                values = plot_data.Idt.count()
+                st.success("Welcome Admin ! Total %d " % values + " User's Have Used Our Tool : )")                
+                
+                tab1,tab2,tab3=st.tabs(["User Information","Feedbacks & Ratings","Visuals"])
+                ### Fetch user data from user_data(table) and convert it into dataframe
+                with tab1:
+                
+                    cursor.execute('''SELECT distinct ID, sec_token, ip_add, act_name, act_mail, act_mob, convert(Predicted_Field using utf8), Timestamp, Name, Email_ID, resume_score, Page_no, pdf_name, convert(User_level using utf8), convert(Actual_skills using utf8), convert(Recommended_skills using utf8), convert(Recommended_courses using utf8), city, state, country, latlong, os_name_ver, host_name, dev_user from user_data''')
+                    data = cursor.fetchall()                
+
+                    st.header("User Information")
+                    df = pd.DataFrame(data, columns=['ID', 'Token', 'IP Address', 'Name', 'Mail', 'Mobile Number', 'Predicted Field', 'Timestamp',
+                                                    'Predicted Name', 'Predicted Mail', 'Resume Score', 'Total Page',  'File Name',   
+                                                    'User Level', 'Actual Skills', 'Recommended Skills', 'Recommended Course',
+                                                    'City', 'State', 'Country', 'Lat Long', 'Server OS', 'Server Name', 'Server User',])
+                    
+                    ### Viewing the dataframe
+                    st.dataframe(df)
+                    
+                    ### Downloading Report of user_data in csv file
+                    st.markdown(get_csv_download_link(df,'User_Data.csv','Download Report'), unsafe_allow_html=True)
+
+                    cursor.execute('''SELECT distinct ID, sec_token, ip_add, act_name, act_mail, act_mob, convert(Predicted_Field using utf8), Timestamp, Name, Email_ID, resume_score, Page_no, pdf_name, convert(User_level using utf8), convert(Actual_skills using utf8), convert(Recommended_skills using utf8), convert(Recommended_courses using utf8), city, state, country, latlong, os_name_ver, host_name, dev_user from recdup_data''')
+                    data = cursor.fetchall()                
+
+                    st.header("Recruiter Information")
+                    df = pd.DataFrame(data, columns=['ID', 'Token', 'IP Address', 'Name', 'Mail', 'Mobile Number', 'Predicted Field', 'Timestamp',
+                                                    'Predicted Name', 'Predicted Mail', 'Resume Score', 'Total Page',  'File Name',   
+                                                    'User Level', 'Actual Skills', 'Recommended Skills', 'Recommended Course',
+                                                    'City', 'State', 'Country', 'Lat Long', 'Server OS', 'Server Name', 'Server User',])
+                    
+                    ### Viewing the dataframe
+                    st.dataframe(df)
+                    
+                    ### Downloading Report of user_data in csv file
+                    st.markdown(get_csv_download_link(df,'Recruiter_Data.csv','Download Report'), unsafe_allow_html=True)
+
+                with tab2:
+                    ### Fetch feedback data from user_feedback(table) and convert it into dataframe
+                    cursor.execute('''SELECT * from user_feedback''')
+                    data = cursor.fetchall()
+
+                    st.header("User Feedbacks")
+                    df = pd.DataFrame(data, columns=['ID', 'Name', 'Email', 'Feedback Score', 'Comments', 'Timestamp'])
+                    st.dataframe(df)
+
+                    ### query to fetch data from user_feedback(table)
+                    query = 'select distinct * from user_feedback'
+                    
+
+                    plotfeed_data = pd.read_sql(query, connection)                        
+
+                    ### Analyzing All the Data's in pie charts
+                    # fetching feed_score from the query and getting the unique values and total value count 
+                    labels = plotfeed_data.feed_score.unique()
+                    values = plotfeed_data.feed_score.value_counts()
+                    
+                    # Pie chart for user ratings
+                    st.subheader("User Ratings")
+                    fig = px.pie(values=values, names=labels, title="Chart of User Rating Score From 1 - 5 🤗", color_discrete_sequence=px.colors.sequential.Aggrnyl)
+                    st.plotly_chart(fig)
+
+                with tab3:
+
+                    labels = plot_data.IP_add.unique()
+                    values = plot_data.IP_add.value_counts()
+
+                    # Pie chart for Users
+                    fig = px.pie(df, values=values, names=labels, title='Usage Based On IP Address 👥', color_discrete_sequence=px.colors.sequential.matter_r)
+                    st.plotly_chart(fig)
+
+                    # fetching City from the query and getting the unique values and total value count 
+
+                    # fetching Country from the query and getting the unique values and total value count 
+                    labels = plot_data.Country.unique()
+                    values = plot_data.Country.value_counts()
+
+                    # Pie chart for Country
+                    fig = px.pie(df, values=values, names=labels, title='Usage Based on Country 🌏', color_discrete_sequence=px.colors.sequential.Purpor_r)
+                    st.plotly_chart(fig)
+
+            ## For Wrong Credentials
+            else:
+                st.error("Wrong ID & Password Provided")
+
+
+def user_feedback():
+        st.success('Welcome to Feedback Dashboard ')
+        tab1,tab2,tab3=st.tabs(["Post Your Feedback","User Comments","Past User Ratings"])
+
+        ts = time.time()
+        cur_date = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+        cur_time = datetime.datetime.fromtimestamp(ts).strftime('%H:%M:%S')
+        timestamp = str(cur_date+'_'+cur_time)
+
+        with tab1:
+            # Feedback Form
+            with st.form("my_form"):
+                st.write("Feedback form")            
+                feed_name = st.text_input('Name')
+                feed_email = st.text_input('Email')
+                feed_score = st.slider('Rate Us From 1 - 5', 1, 5)
+                comments = st.text_input('Comments')
+                Timestamp = timestamp        
+                submitted = st.form_submit_button("Submit")
+                if submitted:
+                    ## Calling insertf_data to add dat into user feedback
+                    insertf_data(feed_name,feed_email,feed_score,comments,Timestamp)    
+                    ## Success Message 
+                    st.success("Thanks! Your Feedback was recorded.") 
+                    ## On Successful Submit
+                    st.balloons()    
+
+
+            # query to fetch data from user feedback table
+        query = 'select * from user_feedback'        
+        plotfeed_data = pd.read_sql(query, connection)                        
+
+        with tab3:
+            # fetching feed_score from the query and getting the unique values and total value count 
+            labels = plotfeed_data.feed_score.unique()
+            values = plotfeed_data.feed_score.value_counts()
+
+        
+            # plotting pie chart for user ratings
+            st.subheader("Past User Ratings")
+            fig = px.pie(values=values, names=labels, title="Chart of User Rating Score From 1 - 5", color_discrete_sequence=px.colors.sequential.Aggrnyl)
+            st.plotly_chart(fig)
+
+        with tab2:
+            #  Fetching Comment History
+            cursor.execute('select distinct feed_name, comments from user_feedback')
+            plfeed_cmt_data = cursor.fetchall()
+
+            st.subheader("User Comments")
+            dff = pd.DataFrame(plfeed_cmt_data, columns=['User', 'Comment'])
+            st.dataframe(dff, width=1200)
+
+def home():
+    
+     st.markdown("""
+        <style>
+        *{
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        }
+
+        body {
+        background-color:red;
+        font-family: Arial, sans-serif;
+        background-color: #121212;
+        color: #fff;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden;
+        }
+        
+        h1{
+        border:purple solid 5px;
+        border-radius:20px;
+        background-color:lavender;
+        font-family:"algerian";
+        }
+    
+    </style>
+    </head>
+    <body><centre><br><br>
+    <h1>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; AI RESUME ANALYZER</h1>
+    </centre>
+    </body> """,unsafe_allow_html=True)
+       
+     #st.image("a.gif")
+
+     st.markdown(
+    """
+    <style>
+    @keyframes float {
+        0% {
+            transform: translateY(100%);
+            opacity: 0;
+        }
+        50% {
+            opacity: 1;
+        }
+        100% {
+            transform: translateY(-150%);
+            opacity: 0;
+        }
+    }
+    .balloon {
+        position: absolute;
+        animation: float 5s infinite;
+        font-size: 20px;
+        font-weight: bold;
+        color: white;
+        text-shadow: 2px 2px 5px #000;padding:20px;background-color:brown;
+        box-shadow:10px 10px 20px rgba(0,0,0.5),-5px -5px 15px rgba(255,255,255,0.3)
+    }
+    .container {
+        position: relative;
+        height: 300px;
+        overflow: hidden;
+    }
+    </style>
+    <div class="container"><br><br><br><br><br><br>
+        <div class="balloon" style="left: 35%; animation-delay: 7s;"> Analyze! Otimize! Succeed! </div>
+    </div>
+    """,
+    unsafe_allow_html=True)
+
+
+def run():
+
+
+# Create the DB
+    db_sql = """CREATE DATABASE IF NOT EXISTS CV;"""
+    cursor.execute(db_sql)
+
+    # Create table user_data and user_feedback
+    DB_table_name = 'user_data'
+    table_sql = "CREATE TABLE IF NOT EXISTS " + DB_table_name + """
+                    (ID INT NOT NULL AUTO_INCREMENT,
+                    sec_token varchar(20) NOT NULL,
+                    ip_add varchar(50) NULL,
+                    host_name varchar(50) NULL,
+                    dev_user varchar(50) NULL,
+                    os_name_ver varchar(50) NULL,
+                    latlong varchar(50) NULL,
+                    city varchar(50) NULL,
+                    state varchar(50) NULL,
+                    country varchar(50) NULL,
+                    act_name varchar(50) NOT NULL,
+                    act_mail varchar(50) NOT NULL,
+                    act_mob varchar(20) NOT NULL,
+                    Name varchar(500) NOT NULL,
+                    Email_ID VARCHAR(500) NOT NULL,
+                    resume_score VARCHAR(8) NOT NULL,
+                    Timestamp VARCHAR(50) NOT NULL,
+                    Page_no VARCHAR(5) NOT NULL,
+                    Predicted_Field BLOB NOT NULL,
+                    User_level BLOB NOT NULL,
+                    Actual_skills BLOB NOT NULL,
+                    Recommended_skills BLOB NOT NULL,
+                    Recommended_courses BLOB NOT NULL,
+                    pdf_name varchar(50) NOT NULL,
+                    PRIMARY KEY (ID)
+                    );"""
+    cursor.execute(table_sql)
+
+    DBR_table_name = 'rec_data'
+    tabler_sql = "CREATE TABLE IF NOT EXISTS " + DBR_table_name + """
+                    (ID INT NOT NULL AUTO_INCREMENT,
+                    sec_token varchar(20) NOT NULL,
+                    ip_add varchar(50) NULL,
+                    host_name varchar(50) NULL,
+                    dev_user varchar(50) NULL,
+                    os_name_ver varchar(50) NULL,
+                    latlong varchar(50) NULL,
+                    city varchar(50) NULL,
+                    state varchar(50) NULL,
+                    country varchar(50) NULL,
+                    act_name varchar(50) NOT NULL,
+                    act_mail varchar(50) NOT NULL,
+                    act_mob varchar(20) NOT NULL,
+                    Name varchar(500) NOT NULL,
+                    Email_ID VARCHAR(500) NOT NULL,
+                    resume_score VARCHAR(8) NOT NULL,
+                    Timestamp VARCHAR(50) NOT NULL,
+                    Page_no VARCHAR(5) NOT NULL,
+                    Predicted_Field BLOB NOT NULL,
+                    User_level BLOB NOT NULL,
+                    Actual_skills BLOB NOT NULL,
+                    Recommended_skills BLOB NOT NULL,
+                    Recommended_courses BLOB NOT NULL,
+                    pdf_name varchar(50) NOT NULL,
+                    PRIMARY KEY (ID)
+                    );"""
+    cursor.execute(tabler_sql)
+
+    DBR_table_name = 'recdup_data'
+    tablerdup_sql = "CREATE TABLE IF NOT EXISTS " + DBR_table_name + """
+                    (ID INT NOT NULL AUTO_INCREMENT,
+                    sec_token varchar(20) NOT NULL,
+                    ip_add varchar(50) NULL,
+                    host_name varchar(50) NULL,
+                    dev_user varchar(50) NULL,
+                    os_name_ver varchar(50) NULL,
+                    latlong varchar(50) NULL,
+                    city varchar(50) NULL,
+                    state varchar(50) NULL,
+                    country varchar(50) NULL,
+                    act_name varchar(50) NOT NULL,
+                    act_mail varchar(50) NOT NULL,
+                    act_mob varchar(20) NOT NULL,
+                    Name varchar(500) NOT NULL,
+                    Email_ID VARCHAR(500) NOT NULL,
+                    resume_score VARCHAR(8) NOT NULL,
+                    Timestamp VARCHAR(50) NOT NULL,
+                    Page_no VARCHAR(5) NOT NULL,
+                    Predicted_Field BLOB NOT NULL,
+                    User_level BLOB NOT NULL,
+                    Actual_skills BLOB NOT NULL,
+                    Recommended_skills BLOB NOT NULL,
+                    Recommended_courses BLOB NOT NULL,
+                    pdf_name varchar(50) NOT NULL,
+                    PRIMARY KEY (ID)
+                    );"""
+    cursor.execute(tablerdup_sql)
+
+
+
+    DBf_table_name = 'user_feedback'
+    tablef_sql = "CREATE TABLE IF NOT EXISTS " + DBf_table_name + """
+                    (ID INT NOT NULL AUTO_INCREMENT,
+                        feed_name varchar(50) NOT NULL,
+                        feed_email VARCHAR(50) NOT NULL,
+                        feed_score VARCHAR(5) NOT NULL,
+                        comments VARCHAR(100) NULL,
+                        Timestamp VARCHAR(50) NOT NULL,
+                        PRIMARY KEY (ID)
+                    );
+                """
+    cursor.execute(tablef_sql)
+
+    st.sidebar.markdown("""
+        <style>
+        *{
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        }
+
+        body {
+        background-image:url("home.jpeg")
+        font-family: Arial, sans-serif;
+        background-color: #121212;
+        color: #fff;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden;
+        }
+        /* Button Styles */
+        .buttons {
+        margin-right: 250px;
+        gap: 10px;
+        }
+        .button {
+        background: lightgray;
+        color: black;
+        font-size: 20px;
+        padding: 15px 30px;
+        border-radius: 10px;
+        cursor: pointer;
+        position: relative;
+        transition: background 0.3s, transform 0.3s;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(10px);
+        z-index: 1;
+        width:160px;height;160px;
+        }
+        .button:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: scale(1.1);
+        }
+        .button:hover::before {
+        transform: scale(1.2);
+        }
+        /* Animation Effect */
+        @keyframes slideIn {
+        from {
+            transform: translateY(-50px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        }
+        button {
+        animation: slideIn 0.5s ease;
+        animation-delay: 0.2s;
+        }
+        h1{
+        border:black solid 5px;
+        border-radius:10px;
+        }
+    
+    </style>
+    </head>
+    <body><centre><br>
+        <div class="buttons">
+        <a href="?button=user">
+        <button class="button" id="userBtn" name="action" value="user">USER</button></a>
+        <a href="?button=recruiter"></br>
+        <button class="button" id="recruiterBtn" name="action" value="recruiter">RECRUITER</button></a>
+        <a href="?button=feedback"></br>
+        <button class="button" id="feedbackBtn" name="action" value="feedback">FEEDBACK</button></a>
+        <a href="?button=admin"></br>
+        <button class="button" id="adminBtn" name="action" value="admin">ADMIN</button></a>
+        </div><br><br>
+    </centre>
+    </body> """,unsafe_allow_html=True)
+    
+    query_params=st.experimental_get_query_params()
+    if "button" in query_params:
+        if query_params["button"][0]=="user":
+            user_function()
+        elif query_params["button"][0]=="admin":
+            admin_function()
+        elif query_params["button"][0]=="feedback":
+            user_feedback()
+        elif query_params["button"][0]=="recruiter":
+            recruiter()
+    else:
+        home()
+    
+    
+# Run the function to render the page
+run()
+
